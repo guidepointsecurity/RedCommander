@@ -7,7 +7,7 @@ Creates two Cobalt Strike C2 servers (DNS and HTTPS), with redirectors, and RedE
 #Important!
 This build does **NOT** use free-tier eligible servers. Approximate costs can vary. During testing, we used six ec2 instances that cost around $70/month total.
 
-##<span style="color:red;background-color:black;"> Please read all of this Readme. </span>
+## <span style="color:red;background-color:black;"> Please read all of this Readme. </span>
 I spent a ton of time ensuring that as many questions as I could think of were answered. If I missed something, please feel free to reach out. But if it's here, I'm going to tell you to RTFM :)
 
 Features
@@ -54,7 +54,7 @@ If you created a decoy joomla site "definitely-legit-company.com" and wanted to 
             evasive.profile
             keystore.store
 ```
-####Details
+#### Details
 All files have to be named EXACTLY as shown above in the folders shown. The exception is naming the folder for the web redirect domains.
 * Add your own cobaltstrike.zip file if you like. Don't include your MalleableC2 profile in that ZIP, though.
 * If you don't include a Keystore, one will be created for you using the LetsEncrypt certificate generated for the C2 domain.
@@ -67,7 +67,7 @@ All files have to be named EXACTLY as shown above in the folders shown. The exce
 Requirements
 ------------
 
-###Ansible Control Node Requirements
+### Ansible Control Node Requirements
 
 * python3
 * python3-boto3
@@ -75,7 +75,7 @@ Requirements
 * python3-requests
 * Ansible (obviously)
 
-###Variable Requirements
+### Variable Requirements
 
 * Amazon AWS API keys. You will need to be able to create EC2 Instances, VPCs, Subnets, IGW, Routing Tables, CloudFront Distributions (wasn't working properly in tests), and Add Keypairs.
 * CloudFlare API Credentials
