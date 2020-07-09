@@ -1,0 +1,26 @@
+---
+- name: Extracting Redirector Archive
+  unarchive:
+    src: tmp/redirs.tgz
+    dest: /opt/
+    mode: u=rwx,g=rx,o=rwx
+    owner: ubuntu
+    group: ubuntu
+    creates: /opt/redirs/install-redir.sh
+  register: redir_setup
+
+- name: Gathering Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "ip-address": "{{ ansible_host }}"
+  register: current_instance
+
+# Static calling 'shorthaul' for scenario name
+- name: Installing Redirector Package
+  shell:
+    cmd: "./install-redir.sh redir-{{ current_instance.instances[0].tags.Host | lower }} shorthaul {{ redelk_backend_sub }}.{{ backend_domain[0] }}:5044"
+    chdir: /opt/redirs/
+    creates: /opt/redirs/redelk-install.log

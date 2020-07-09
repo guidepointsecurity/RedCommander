@@ -1,0 +1,35 @@
+---
+- name: Getting CloudFront Data
+  cloudfront_info:
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+  register: cf_data
+
+# This purposely Errors out because we don't need to wait forever for it to finish.
+- name: Deleting Old CloudFront Distributions
+  cloudfront_distribution:
+    distribution_id: "{{ item.Id }}"
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    enabled: no
+    state: absent
+    wait: no
+    wait_timeout: 1
+    tags:
+      Status: "Decommissioned"
+  when: item.Tags.Project == engagement_id
+  loop: "{{ cf_data.cloudfront.summary.distributions }}"
+  register: cf_del_result
+  # Hacky way to trick Ansible into thinking this fail was not a fail.
+  failed_when: cf_del_result.failed == false and cf_del_result.failed == true
+
+- name: Create CloudFront Distribution
+  cloudfront_distribution:
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   default_origin_domain_name: "{{ https_backend_sub[0] }}.{{ backend_domain[0] }}"
+   state: present
+   comment: "C2 Front for {{ https_backend_sub[0] }}.{{ backend_domain[0] }}"
+   tags:
+    Project: "{{ engagement_id }}"
+    Priority: '1'

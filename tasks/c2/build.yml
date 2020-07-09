@@ -1,0 +1,130 @@
+---
+# At the time of this build, CloudFront has more than 50 CIDRs
+- set_fact:
+    cf_ips: "{{ lookup('aws_service_ip_ranges', service='CLOUDFRONT', wantlist=True) }}"
+    cf_part1: []
+    cf_part2: []
+
+- set_fact:
+    cf_part1: "{{ cf_part1 + [ cf_ips[item | int] ] }}"
+  with_sequence: start=0 end=48 stride=1
+  no_log: true
+
+- set_fact:
+    cf_part2: "{{ cf_part2 + [ cf_ips[item | int] ] }}"
+  with_sequence: start=49 end="{{ lookup('aws_service_ip_ranges', service='CLOUDFRONT', wantlist=True) | length | int - 1 }}" stride=1
+  no_log: true
+
+- name: Create Security Groups for CloudFront
+  ec2_group:
+   name: "CF-SG-{{ engagement_id }}-{{ item.number }}"
+   description: "CF SG for {{ vpc_name }}"
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: tcp
+       ports:
+       - 443
+       rule_desc: "CloudFront IP Addresses"
+       cidr_ip: "{{ item.cidr }}"
+  with_items:
+    - {"number" : 1, "cidr" : "{{ cf_part1 }}" }
+    - {"number" : 2, "cidr" : "{{ cf_part2 }}" }
+  register: cf_sg
+
+- name: Create Security Group for C2 Servers
+  ec2_group:
+   name: "C2-SG-{{ engagement_id }}"
+   description: "C2 SG for {{ vpc_name }}"
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: tcp
+       ports:
+       - 80
+       rule_desc: "Certbot Port"
+       cidr_ip: "0.0.0.0/0"
+  register: c2_sg
+
+- name: Creating a BreakGlass ec2 key pair
+  ec2_key:
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   name: "{{ keypair_name }}-{{ engagement_id }}"
+   region: "{{ region }}"
+  register: keypair
+
+- name: Copy EC2 Private Key locally so it can be later on used to SSH into the instance
+  copy: 
+    content: "{{ keypair.key.private_key }}"
+    dest: "{{ ec2_key_directory }}key.pem"
+    mode: '0600'
+  when: keypair.changed == true
+
+- name: Create C2 Servers
+  ec2:
+   image: "{{ c2_ami }}"
+   exact_count: "{{ c2_count }}"
+   wait: yes
+   instance_type: t2.small
+   region: "{{ region }}"
+   group_id: ["{{ security_group.group_id }}", "{{ c2_sg.group_id }}", "{{ cf_sg.results[0].group_id }}", "{{ cf_sg.results[1].group_id }}"]
+   vpc_subnet_id: "{{ subnet.subnet.id }}"
+   key_name: "{{ keypair.key.name  }}"
+   instance_tags:
+     Name: "CobaltStrike-Server-{{ engagement_id }}"
+     Owner: "{{ infra_owner }}"
+   count_tag:
+     Name: "CobaltStrike-Server-{{ engagement_id }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+  register: c2_servers
+  tags:
+    - new_profile
+
+- name: Assigning Tags to DNS C2 Server
+  ec2_instance:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    instance_ids: "{{ c2_servers.tagged_instances[0].id }}"
+    region: "{{ region }}"
+    tags:
+      Type: "DNS"
+      Host: "{{ dns_backend_sub[0] }}.{{ backend_domain[0] }}"
+      Scenario: "LongHaul"
+
+- name: Assigning Tags to HTTPS C2 Server(s)
+  ec2_instance:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    instance_ids: "{{ item.id }}"
+    region: "{{ region }}"
+    tags:
+      Type: "HTTPS"
+      Host: "{{ https_backend_sub[0] }}.{{ backend_domain[0] }}"
+      Scenario: "ShortHaul"
+  when:
+    item.id != c2_servers.tagged_instances[0].id
+  with_items:
+    "{{ c2_servers.tagged_instances }}"
+
+- name: Adding C2 Servers to Inventory
+  add_host:
+    name: "{{ item.public_ip }}"
+    group: teamservers
+    ansible_ssh_private_key_file: "{{ec2_key_directory}}/key.pem"
+  vars:
+    new_host: "{{ item.public_dns }}"
+  loop: "{{ c2_servers.tagged_instances }}"
+  tags:
+    - new_profile
+
+- name: Wait for SSH to Come Up
+  wait_for_connection:
+    delay: 30
+    timeout: 120
+  when: c2_servers.changed == true

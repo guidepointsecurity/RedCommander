@@ -1,0 +1,62 @@
+---
+- name: Upgrading Image
+  apt:
+    upgrade: full
+
+- name: Installing Dependencies
+  apt:
+    update_cache: yes
+    pkg:
+      - socat
+      - curl
+      - wget
+      - python3-pip
+      - python3-boto3
+      - python3-botocore
+    state: latest
+    install_recommends: yes
+
+- name: Gathering DNS C2 Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "CobaltStrike-Server-{{ engagement_id }}"
+      "instance-state-name": "running"
+      "tag:Type": "DNS"
+  register: c2_dns
+
+- name: Gathering Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "ip-address": "{{ ansible_host }}"
+  register: current_instance
+
+- name: Updating Hostname
+  shell:
+    cmd: "hostnamectl set-hostname redir-dns-{{ current_instance.instances[0].tags.Host | lower }}"
+
+- set_fact:
+    c2_dns_ip: "{{ c2_dns.instances[0].public_ip_address }}"
+
+- name: Copy Service Template for Socat
+  template:
+    src: templates/dns_rdir/socat_service.j2
+    dest: /etc/systemd/system/socat.service
+    force: yes
+
+- name: Reload Systemd Daemon
+  shell:
+    cmd: "systemctl daemon-reload"
+
+- name: Start Socat
+  service:
+    name: socat
+    state: restarted
+    enabled: yes
+  tags:
+    - new_profile

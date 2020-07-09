@@ -1,0 +1,19 @@
+---
+# Super Hacky way to associate the right IP to the right Type
+- set_fact:
+    domain_assoc: "{{ (dns_backend_sub + https_backend_sub) | zip(c2_servers.tagged_instances) | list }}"
+
+# Adding C2 DNS Records. This is simply to make it easier for us to connect to the teamserver.
+- name: Adding CloudFlare Records for C2 Servers
+  cloudflare_dns:
+    account_email: "{{ cf_email }}"
+    account_api_token: "{{ cf_key }}"
+    record: "{{ item[0] }}"
+    # This is part of an update change. If we use more than one backend_domain, this will have to change
+    zone: "{{ backend_domain[0] }}"
+    type: A
+    ttl: 300
+    value: "{{ item[1].public_ip }}"
+    solo: yes
+  loop:
+    "{{domain_assoc}}"

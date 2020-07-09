@@ -1,0 +1,6 @@
+---
+- name: Update Authorized Hosts File
+  blockinfile:
+    path: /home/ubuntu/.ssh/authorized_keys
+    block: |
+      {{ ssh_keys }}

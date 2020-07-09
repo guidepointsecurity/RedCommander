@@ -1,0 +1,106 @@
+---
+- name: Gathering Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "ip-address": "{{ ansible_host }}"
+  register: current_instance
+
+- name: Installing required MySQL Modules
+  apt:
+    update_cache: yes
+    state: latest
+    install_recommends: yes
+    pkg:
+      #- python3-pymysql
+      - php7.2-mysql
+
+- name: Checking for Custom Joomla Install
+  stat: 
+    path: "files/{{ current_instance.instances[0].tags.Host }}/joomla.zip"
+  delegate_to: localhost
+  register: joomla_custom
+
+- name: Copy Joomla Files to Host
+  copy:
+    src: "{{ item }}"
+    dest: "/tmp/{{ item | basename }}"
+  with_fileglob:
+    - "files/{{ current_instance.instances[0].tags.Host }}/*"
+  when: joomla_custom.stat.exists == true
+
+- name: Setting .htaccess content
+  shell:
+    cmd: "cat /tmp/*-mod_rewrite.conf"
+  register: htaccess
+  when: joomla_custom.stat.exists == true
+
+- name: Clean out /var/www/html
+  shell:
+    cmd: rm -rf /var/www/html/*
+    warn: no
+  when: joomla_custom.stat.exists == true
+
+- name: Extract Joomla Install
+  unarchive:
+    src: /tmp/joomla.zip
+    dest: /var/www/html/
+    remote_src: yes
+    creates: /var/www/html/index.php
+    #mode: preserve
+    owner: "www-data"
+    group: "www-data"
+  register: x_joomla
+  when: joomla_custom.stat.exists == true
+
+# Couldn't get mysql_db module to work without opening ports.
+- name: Create a new database with name 'cs_joomla'
+  shell: |
+    mysql -u root -e "CREATE DATABASE IF NOT EXISTS cs_joomla;"
+  when: x_joomla.changed == true
+
+# This is probably unstable.
+- name: Import SQL Dump
+  shell: |
+    mysql -u root cs_joomla < /tmp/dump.sql;
+  when: x_joomla.changed == true
+
+- name: Fixing Some Config Issues with Joomla
+  shell: |
+    if [ -f "/var/www/html/README.txt" ]; then rm /var/www/html/README.txt; fi;
+    if [ -f "/var/www/html/LICENSE.txt" ]; then rm /var/www/html/LICENSE.txt; fi;
+    if [ -f "/var/www/html/web.config.txt" ]; then rm /var/www/html/web.config.txt; fi;
+    if [ -f "/var/www/html/htaccess.txt" ]; then mv /var/www/html/htaccess.txt /var/www/html/.htaccess; fi;
+    if [ -f "/var/www/html/robots.txt.dist" ]; then mv /var/www/html/robots.txt.dist /var/www/html/robots.txt; fi;
+  when: x_joomla.changed == true
+
+- name: Inserting Custom htaccess data into Joomla's
+  blockinfile:
+    insertbefore: BOF
+    path: /var/www/html/.htaccess
+    block: |
+      {{ htaccess.stdout }}
+  when: x_joomla.changed == true
+
+- name: Getting Database Password
+  shell:
+    cmd: "cat /root/.my.cnf | grep password | head -n 1 | cut -f 3 -d ' '"
+  register: mysql_pw
+  when: x_joomla.changed == true
+
+- name: Modify Joomla Config
+  shell: |
+    sed -i "s/public \$user = '.*'/public \$user = 'root'/" /var/www/html/configuration.php
+    sed -i "s/public \$password = '.*'/public \$password = '{{ mysql_pw.stdout}}'/" /var/www/html/configuration.php
+    sed -i "s/public \$session_handler = '.*'/public \$session_handler = 'none'/" /var/www/html/configuration.php
+  args:
+    warn: no
+  when: x_joomla.changed == true
+
+- name: Starting Apache Service
+  service:
+    name: apache2
+    state: restarted
+    enabled: yes

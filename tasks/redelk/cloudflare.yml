@@ -1,0 +1,12 @@
+---
+# Adding RedELK DNS Record
+- name: Adding CloudFlare Records for Domains
+  cloudflare_dns:
+    account_email: "{{ cf_email }}"
+    account_api_token: "{{ cf_key }}"
+    record: "{{ redelk_backend_sub }}"
+    zone: "{{ backend_domain[0] }}"
+    type: A
+    ttl: 300
+    value: "{{ redelk_server.tagged_instances[0].public_ip }}"
+    solo: yes

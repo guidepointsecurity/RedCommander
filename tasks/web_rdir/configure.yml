@@ -1,0 +1,165 @@
+---
+- set_fact:
+    mysql_pw: "{{ lookup('password','/dev/null chars=ascii_letters,digits length=64' ) }}"
+  # We don't need Sensitive Stuff in the Logs
+  no_log: true
+
+- name: Creating MySQL Auth File
+  template:
+    src: templates/web_rdir/my.j2
+    dest: /root/.my.cnf
+    mode: '0600'
+    force: no
+  register: mysql_auth
+
+- name: Setting AutoConfig Settings for MySQL
+  shell:
+    cmd: "echo 'mysql-server-5.7 mysql-server/root_password password {{ mysql_pw }}' | sudo debconf-set-selections; echo 'mysql-server-5.7 mysql-server/root_password_again password {{ mysql_pw }}' | sudo debconf-set-selections"
+  when: mysql_auth.changed == true
+  # We don't need Sensitive Stuff in the Logs
+  no_log: true
+
+- name: Upgrading Image
+  apt:
+    upgrade: full
+
+- name: Installing Software Properties Common
+  apt:
+    update_cache: yes
+    pkg:
+      - software-properties-common
+    install_recommends: yes
+    state: latest
+
+- name: Adding Certbot Repository
+  apt_repository:
+    repo: ppa:certbot/certbot
+
+- name: Installing Dependencies
+  apt:
+    update_cache: yes
+    pkg:
+      - apache2
+      - certbot
+      - python-certbot-apache
+      - wget
+      - python3-pip
+      - unzip
+      - php
+      - libapache2-mod-php
+      - python3-boto3
+      - python3-botocore
+      - mysql-server-5.7
+      - php-zip
+      - php-xml
+    state: latest
+    install_recommends: yes
+
+- name: Gathering Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "ip-address": "{{ ansible_host }}"
+  register: current_instance
+  tags:
+    - new_profile
+
+- name: Updating Hostname
+  shell:
+    cmd: "hostnamectl set-hostname redir-web-{{ current_instance.instances[0].tags.Host | lower }}"
+
+- name: Stopping Apache Service
+  service:
+    name: apache2
+    state: stopped
+    enabled: yes
+
+- name: Generate Certbot Certificate
+  shell:
+    # Non-Dry Run version
+    cmd: "certbot --agree-tos --no-eff-email -m none@none.com --standalone certonly -d {{ current_instance.instances[0].tags.Host }} --noninteractive"
+    #cmd: "certbot --dry-run --agree-tos --no-eff-email -m none@none.com --standalone certonly -d {{ current_instance.instances[0].tags.Host }} --noninteractive"
+    creates: "/etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/fullchain.pem"
+
+- name: Enabling Apache Modules
+  apache2_module:
+    state: present
+    name: "{{ item }}"
+  with_items:
+    - ssl
+    - rewrite
+    - proxy
+    - proxy_http
+    - proxy_html
+    - deflate
+    - headers
+    - proxy_connect
+
+# Harden this. SymLinks are stupid.
+- name: Copy Apache Config
+  copy:
+    src: templates/web_rdir/apache.conf
+    dest: /etc/apache2/apache2.conf
+
+- name: Copy Apache Redirect Rules
+  copy:
+    src: files/redirect.rules
+    dest: /etc/apache2/redirect.rules
+
+- name: Modifying Destination URL for Redirect Rules
+  lineinfile:
+    regexp: "^Define REDIR_TARGET"
+    line: "Define REDIR_TARGET |{{ current_instance.instances[0].tags.Host }}|"
+    dest: /etc/apache2/redirect.rules
+
+- name: Copy SSL Template for Web Redirect
+  template:
+    src: templates/web_rdir/default-ssl.j2
+    dest: /etc/apache2/sites-available/default-ssl.conf
+
+- name: Reloading MySQL Server
+  service:
+   name: mysql
+   state: restarted
+   enabled: yes
+
+- name: Copying HTTPS Evasive Profile
+  copy:
+    src: tmp/HTTPS/evasive.profile
+    dest: /tmp/evasive.profile
+    force: yes
+  tags:
+    - new_profile
+
+- name: Copying c2ModRewrite Script
+  copy:
+    src: files/cs2modrewrite.py
+    dest: /opt/cs2modrewrite.py
+    force: yes
+  tags:
+    - new_profile
+
+- name: Executing Mod_Rewrite Builder
+  shell:
+    cmd: "python3 /opt/cs2modrewrite.py -i /tmp/evasive.profile -c https://{{ https_backend_sub[0] }}.{{ backend_domain[0] }} -r https://{{ current_instance.instances[0].tags.Host }} -o /tmp/{{ current_instance.instances[0].tags.Host }}-mod_rewrite.conf"
+  tags:
+    - new_profile
+
+- name: Editing .htaccess and enabling the SSL config
+  shell: |
+    sed -i '/## .htaccess START/,/#{40}/d' /var/www/html/.htaccess
+    sed -i '/#{40}/d' /var/www/html/.htaccess
+    cat /tmp/{{ current_instance.instances[0].tags.Host }}-mod_rewrite.conf >> /var/www/html/.htaccess
+    a2ensite default-ssl
+  args:
+    warn: no
+  tags:
+    - new_profile
+
+- name: Starting Apache Service
+  service:
+    name: apache2
+    state: started
+    enabled: yes

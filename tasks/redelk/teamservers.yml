@@ -1,0 +1,25 @@
+---
+- name: Extracting Teamserver Archive
+  unarchive:
+    src: tmp/teamservers.tgz
+    dest: /opt/
+    mode: u=rwx,g=rx,o=rwx
+    owner: ubuntu
+    group: ubuntu
+    creates: /opt/teamservers/install-teamserver.sh
+  register: teamserver_setup
+
+- name: Gathering Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "ip-address": "{{ ansible_host }}"
+  register: current_instance
+
+- name: Installing Teamserver Package
+  shell:
+    cmd: "./install-teamserver.sh c2-{{ current_instance.instances[0].tags.Type | lower }} {{ current_instance.instances[0].tags.Scenario | lower }} {{ redelk_backend_sub }}.{{ backend_domain[0] }}:5044"
+    chdir: /opt/teamservers/
+    creates: /opt/teamservers/redelk-install.log

@@ -1,0 +1,13 @@
+[Unit]
+Description=CobaltStrike Teamserver Service
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/opt/cobaltstrike
+Environment="PATH=/opt/cobaltstrike:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"
+ExecStart=/opt/cobaltstrike/teamserver {{ ansible_host }} {{ cs_password }} evasive.profile
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,146 @@
+---
+# Use this at your own risk!
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Just Double Checking...
+      pause:
+        prompt: "Are you sure about this? (Press enter to continue)"
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    - name: Gathering Info
+      ec2_instance_info:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        region: "{{ region }}"
+        filters:
+          "tag:Name": "*Server-{{ engagement_id }}*"
+          "instance-state-name": "running"
+      register: info
+    - set_fact:
+        vpc: "{{ info.instances[0].vpc_id }}"
+        key: "{{ info.instances[0].key_name }}"
+        instances: []
+        domains: "{{ domains + dns_domains + backend_domain}}"
+    - set_fact:
+        instances: "{{ instances + [ item.instance_id ] }}"
+      with_items:
+        "{{ info.instances }}"
+    - name: Deleting CloudFlare Records
+      shell:
+        cmd: "python files/nuke_cloudflare_dns.py '{{ cf_email }}' '{{ cf_key }}' '{{ domains }}'"
+      no_log: yes
+    - name: Removing KeyPair
+      ec2_key:
+        name: "{{ key }}"
+        region: "{{ region }}"
+        state: absent
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+    - name: Deleting Instances
+      ec2:
+        instance_ids: '{{ instances }}'
+        region: '{{ region }}'
+        state: absent
+        wait: True
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+
+    - name: Getting CloudFront Data
+      cloudfront_info:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+      register: cf_data
+      
+      # This purposely Errors out because we don't need to wait forever for it to finish.
+    - name: Deleting Old CloudFront Distributions
+      cloudfront_distribution:
+        distribution_id: "{{ item.Id }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        enabled: no
+        state: absent
+        wait: no
+        wait_timeout: 1
+        tags:
+          Status: "Decommissioned"
+      when: item.Tags.Project == engagement_id
+      loop: "{{ cf_data.cloudfront.summary.distributions }}"
+      register: cf_del_result
+      # Hacky way to trick Ansible into thinking this fail was not a fail.
+      failed_when: cf_del_result.failed == false and cf_del_result.failed == true
+
+    - name: Getting Security Group Info
+      ec2_group_info:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        filters:
+          vpc-id: "{{ vpc }}"
+        region: "{{ region }}"
+      register: sg
+    - set_fact:
+        sg_id: []
+    - set_fact:
+        sg_id: "{{ sg_id + [ item.group_id ] }}"
+      when: item.group_name != "default"
+      with_items:
+        "{{ sg.security_groups }}"
+
+    - name: Deleting Security Groups
+      ec2_group:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc }}"
+        group_id: "{{ item }}"
+        region: "{{ region }}"
+        state: absent
+      with_items:
+        "{{ sg_id }}"
+
+    - name: Deleting Subnet
+      ec2_vpc_subnet:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc }}"
+        region: "{{ region }}"
+        state: absent
+        cidr: "{{ subnet_cidr }}"
+
+    - name: Deleting IGW
+      ec2_vpc_igw:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc }}"
+        region: "{{ region }}"
+        state: absent
+
+    - name: Getting Route Table Info
+      ec2_vpc_route_table_info:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        filters:
+          "vpc-id": "{{ vpc }}"
+          "tag:Name": "{{ route_name }}-{{ engagement_id }}"
+        region: "{{ region }}"
+      register: rt
+    - debug:
+        var: rt
+
+    - name: Deleting Route Table
+      ec2_vpc_route_table:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc }}"
+        route_table_id: "{{ rt.route_tables[0].id }}"
+        region: "{{ region }}"
+        state: absent
+        lookup: id
+
+    - name: Deleting VPC
+      ec2_vpc_net:
+        name: "{{ vpc_name }}-{{ engagement_id }}"
+        cidr_block: "{{ vpc_cidr }}"
+        region: "{{ region }}"
+        state: absent
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"

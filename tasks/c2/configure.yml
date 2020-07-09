@@ -1,0 +1,216 @@
+---
+- name: Upgrading Image
+  apt:
+    upgrade: full
+- name: Installing Software Properties Common
+  apt:
+    update_cache: yes
+    pkg:
+      - software-properties-common
+    install_recommends: yes
+    state: latest
+
+- name: Adding DNS NameServers
+  lineinfile:
+    path: /etc/resolv.conf
+    insertbefore: BOF
+    line: 'nameserver 1.1.1.1'
+    state: present
+
+- name: Adding Certbot Repository
+  apt_repository:
+    repo: ppa:certbot/certbot
+
+- name: Installing Dependencies
+  apt:
+    update_cache: yes
+    pkg:
+      - openjdk-8-jdk
+      - openjdk-8-dbg
+      - curl
+      - wget
+      - python3-pip
+      - unzip
+      - default-jre
+      - expect
+      - certbot
+      - python3-boto3
+      - python3-botocore
+    state: latest
+    install_recommends: yes
+
+- name: Gathering Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "ip-address": "{{ ansible_host }}"
+  register: current_instance
+
+- name: Updating Hostname
+  shell:
+    cmd: "hostnamectl set-hostname c2-{{ current_instance.instances[0].tags.Type | lower }}"
+
+- name: Get Remote File Location for CobaltStrike
+  stat: 
+    path: "files/cobaltstrike.zip"
+  delegate_to: localhost
+  register: cs_custom
+
+- name: Unpacking CobaltStrike
+  unarchive:
+    src: files/cobaltstrike.zip
+    dest: /opt/
+    creates: /opt/cobaltstrike/cobaltstrike.jar
+  when: cs_custom.stat.exists == true
+
+# This module is only needed if you want to download a base version of Cobalt Strike
+- name: Downloading CobaltStrike
+  shell: |
+    token=`curl -i -s -k -X 'POST' -H 'Host: cobaltstrike.com' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:69.0) Gecko/20100101 Firefox/69.0' -H 'Content-Type: application/x-www-form-urlencoded' -H 'Connection: close' -H 'Referer: https://cobaltstrike.com/download' --data-binary "dlkey={{ cskey }}" 'https://cobaltstrike.com/download' | grep 'href="/downloads' | cut -f 4 -d '\"' | cut -f 1 -d '.'`
+    wget https://cobaltstrike.com$\{token\}.tgz -O /tmp/cobaltstrike.tgz
+  args:
+    creates: "/tmp/cobaltstrike.tgz"
+  when: cs_custom.stat.exists == false
+
+- name: Unpacking CobaltStrike
+  unarchive:
+    src: /tmp/cobaltstrike.tgz
+    dest: /opt/
+    remote_src: yes
+    creates: /opt/cobaltstrike/cobaltstrike.jar
+  when: cs_custom.stat.exists == false
+
+- name: Adding CobaltStrike License Key
+  shell:
+    cmd: "echo {{ cskey }} >> /root/.cobaltstrike.license"
+    creates: "/root/.cobaltstrike.license"
+  # We don't need Sensitive Stuff in the Logs
+  no_log: true
+
+- name: Updating CobaltStrike
+  shell:
+    chdir: "/opt/cobaltstrike"
+    cmd: "./update"
+    warn: no
+
+- name: Copy Service Template for Teamserver
+  template:
+    src: templates/c2/teamserver_service.j2
+    dest: /etc/systemd/system/teamserver.service
+    force: yes
+
+- name: Reload Systemd Daemon
+  shell:
+    cmd: "systemctl daemon-reload"
+
+- name: Get Remote File Location for KeyStore
+  stat: 
+    path: "files/custom/{{ current_instance.instances[0].tags.Type }}/keystore.store"
+  delegate_to: localhost
+  register: c2_keystore
+
+- name: Grabbing Custom KeyStore if Exists
+  copy:
+    src: "files/custom/{{ current_instance.instances[0].tags.Type }}/keystore.store"
+    dest: /opt/cobaltstrike/keystore.store
+  when: c2_keystore.stat.exists == true
+
+- name: Generate Certbot Certificate
+  shell:
+    # Non-Dry Run version
+    cmd: "certbot --agree-tos --no-eff-email -m none@none.com --standalone certonly -d {{ current_instance.instances[0].tags.Host }} --noninteractive"
+    #cmd: "certbot --dry-run --agree-tos --no-eff-email -m none@none.com --standalone certonly -d {{ current_instance.instances[0].tags.Host }} --noninteractive"
+    creates: "/etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/fullchain.pem"
+  when: c2_keystore.stat.exists == false
+
+- name: Creating KeyStore for C2
+  shell: |
+    openssl pkcs12 -export -in /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/fullchain.pem -inkey /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/privkey.pem -out /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/{{ current_instance.instances[0].tags.Host }}.p12 -name {{ current_instance.instances[0].tags.Host }} -passout pass:{{ keystore_password }};
+    keytool -importkeystore -deststorepass {{ keystore_password }} -destkeypass {{ keystore_password }} -destkeystore /opt/cobaltstrike/keystore.store -srckeystore /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/{{ current_instance.instances[0].tags.Host }}.p12 -srcstoretype PKCS12 -srcstorepass {{ keystore_password }} -alias {{ current_instance.instances[0].tags.Host }}
+  args:
+    creates: /opt/cobaltstrike/keystore.store
+  when: c2_keystore.stat.exists == false
+
+- name: Get Remote File Location for Profile
+  stat: 
+    path: "files/custom/{{ current_instance.instances[0].tags.Type }}/evasive.profile"
+  delegate_to: localhost
+  register: c2_profile
+
+- name: Grabbing Custom C2 Profile if Exists
+  copy:
+    src: "files/custom/{{ current_instance.instances[0].tags.Type }}/evasive.profile"
+    dest: /opt/cobaltstrike/evasive.profile
+  when: c2_profile.stat.exists == true
+
+- name: Unpacking C2concealer
+  unarchive:
+    src: files/C2concealer.zip
+    dest: /opt/
+    creates: /opt/C2concealer/script.exp
+  when: c2_profile.stat.exists == false
+
+- name: Installing C2concealer
+  shell:
+    chdir: /opt/C2concealer
+    cmd: "chmod +x ./install.sh; ./install.sh"
+    creates: /usr/local/bin/C2concealer
+    warn: no
+  when: c2_profile.stat.exists == false
+
+- name: Executing C2concealer via Expect
+  shell:
+    chdir: /opt/C2concealer/
+    cmd: "chmod +x ./script.exp; ./script.exp; touch /tmp/c2concealer"
+    creates: /tmp/c2concealer
+  when: c2_profile.stat.exists == false
+  tags:
+    - new_profile
+
+- name: Deleting Copied KeyStore File
+  file:
+    path: /opt/C2concealer/keystore.store
+    state: absent
+  when: c2_profile.stat.exists == false
+  tags:
+    - new_profile
+
+- name: Moving Profile to CobaltStrike
+  shell:
+    chdir: /opt/C2concealer
+    cmd: "x=`ls -x *.profile`; mv $x /opt/cobaltstrike/evasive.profile; rm -f $x"
+  when: c2_profile.stat.exists == false
+  tags:
+    - new_profile
+
+- name: Modifying DNS Stager for Evasive Profile
+  lineinfile:
+    path: /opt/cobaltstrike/evasive.profile
+    regexp: '^.*dns_stager_subhost'
+    state: absent
+  when: c2_profile.stat.exists == false
+
+# Likely won't work if more than 2 HTTPS C2 servers are created
+- name: Fetching Evasive Profile
+  fetch:
+    src: /opt/cobaltstrike/evasive.profile
+    dest: "tmp/{{ current_instance.instances[0].tags.Type }}/evasive.profile"
+    flat: yes
+  tags:
+    - new_profile
+
+- name: Start Teamserver
+  service:
+    name: teamserver
+    state: restarted
+    enabled: yes
+  tags:
+    - new_profile
+
+- name: Stop systemd-resolved
+  service:
+    name: systemd-resolved
+    state: stopped
+    enabled: no

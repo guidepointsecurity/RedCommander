@@ -1,0 +1,34 @@
+<IfModule mod_ssl.c>
+        <VirtualHost *:443>
+                ServerAdmin webmaster@{{ current_instance.instances[0].tags.Host }}
+                ServerName {{ current_instance.instances[0].tags.Host }}
+                DocumentRoot /var/www/html
+                LogFormat {% raw %}"%t %{hostname}e apache[%P]: frontend:%{frontend_name}e/%A:%{local}p backend:%{backend_name}e client:%h:%{remote}p xforwardedfor:%{X-Forwarded-For}i headers:{%{User-Agent}i|%{Host}i|%{X-Forwarded-For}i|%{X-Forwarded-Proto}i|%{X-Host}i|%{Forwarded}i|%{Via}i|} statuscode:%s request:%r" redelklogformat{% endraw %}
+                
+                Include /etc/apache2/redirect.rules
+                CustomLog ${APACHE_LOG_DIR}/access-redelk.log redelklogformat
+                ErrorLog ${APACHE_LOG_DIR}/error.log
+                SSLEngine on
+                SSLCertificateFile /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/cert.pem
+				SSLCertificateKeyFile /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/privkey.pem
+				SSLProxyEngine On
+				SSLProxyVerify none
+				SSLProxyCheckPeerCN off
+				SSLProxyCheckPeerName off
+                <FilesMatch "\.(cgi|shtml|phtml|php)$">
+                                SSLOptions +StdEnvVars
+                </FilesMatch>
+                <Directory /var/www/html>
+                php_admin_value upload_tmp_dir "/var/www/html/tmp"
+                php_admin_value disable_functions "show_source, system, shell_exec, passthru, exec, phpinfo, popen, proc_open"
+                php_admin_value open_basedir "/var/www/html"
+                </Directory>
+                <Directory /usr/lib/cgi-bin>
+                                SSLOptions +StdEnvVars
+                </Directory>
+                BrowserMatch "MSIE [2-6]" \
+                                nokeepalive ssl-unclean-shutdown \
+                                downgrade-1.0 force-response-1.0
+                BrowserMatch "MSIE [17-9]" ssl-unclean-shutdown
+        </VirtualHost>
+</IfModule>

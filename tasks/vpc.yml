@@ -1,0 +1,60 @@
+---
+- name: Create VPC "{{ vpc_name }}"
+  ec2_vpc_net:
+    name: "{{ vpc_name }}-{{ engagement_id }}"
+    cidr_block: "{{ vpc_cidr }}"
+    region: "{{ region }}"
+    state: present
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+  register: vpc
+- name: Associate Subnet to the VPC
+  ec2_vpc_subnet:
+   state: present
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   cidr: "{{ subnet_cidr }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   map_public: yes
+   resource_tags:
+     Name: "{{ subnet_name }}-{{ engagement_id }}"
+  register: subnet
+- name: Create IGW
+  ec2_vpc_igw:
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   state: "present"
+   tags:
+     Name: "{{ igw_name }}-{{ engagement_id }}"
+  register: igw
+- name: Add Route to IGW
+  ec2_vpc_route_table:
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   subnets:
+     - "{{ subnet.subnet.id }}"
+   routes:
+     - dest: 0.0.0.0/0
+       gateway_id: "{{ igw.gateway_id }}"
+   tags:
+     Name: "{{ route_name }}-{{ engagement_id }}"
+# update the CIDR address in the SSH port section.
+- name: Create Security Group
+  ec2_group:
+   name: "Main SG - {{ engagement_id }}"
+   description: "Main SG for {{ vpc_name }}"
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: tcp
+       ports:
+       - 22
+       cidr_ip: "{{ gps_ips }}"
+  register: security_group

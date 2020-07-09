@@ -1,0 +1,36 @@
+---
+- name: Gathering All Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "*Server-{{ engagement_id }}*"
+      "instance-state-name": "running"
+  register: instances
+
+- name: Creating Output File
+  file:
+    state: touch
+    dest: "/tmp/{{ engagement_id }}-output.txt"
+
+
+- name: Adding Output Data
+  shell:
+    cmd: "echo '{{ item.tags.Name }}: {{ item.tags.Host }} ({{ item.public_ip_address }})' >> /tmp/{{ engagement_id }}-output.txt"
+  loop:
+    "{{ instances.instances|sort(attribute='tags.Name')}}"
+  loop_control:
+    label: "{{ item.tags.Name }}"
+
+- name: Printing Output
+  debug:
+    var: item
+  with_file: "/tmp/{{ engagement_id }}-output.txt"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Removing Output File
+  file:
+    state: absent
+    dest: "/tmp/{{ engagement_id }}-output.txt"

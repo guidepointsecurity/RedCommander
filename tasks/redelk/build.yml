@@ -1,0 +1,56 @@
+---
+# Temporary for Certbot
+- name: Create Security Group for RedELK Server
+  ec2_group:
+   name: "RedELK-SG-{{ engagement_id }}"
+   description: "RedELK SG for {{ vpc_name }}"
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: tcp
+       ports:
+       - 80
+       rule_desc: "Certbot Port"
+       cidr_ip: "0.0.0.0/0"
+  register: redelk_sg
+
+- name: Create RedELK Server
+  ec2:
+   image: "{{ elk_ami }}"
+   exact_count: 1
+   wait: yes
+   instance_type: t2.large
+   region: "{{ region }}"
+   group_id: ["{{ security_group.group_id }}", "{{ redelk_sg.group_id }}"]
+   vpc_subnet_id: "{{ subnet.subnet.id }}"
+   key_name: "{{ keypair.key.name  }}"
+   volumes:
+    - device_name: /dev/sda1
+      volume_size: 100
+      delete_on_termination: true
+   instance_tags:
+     Name: "RedELK-Server-{{ engagement_id }}"
+     Owner: "{{ infra_owner }}"
+     Type: "RedELK"
+     Host: "{{ redelk_backend_sub }}.{{ backend_domain[0] }}"
+   count_tag:
+     Name: "RedELK-Server-{{ engagement_id }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+  register: redelk_server
+
+- name: Adding RedELK Server to Inventory
+  add_host:
+    name: "{{ redelk_server.tagged_instances[0].public_ip }}"
+    group: redelk
+    ansible_ssh_private_key_file: "{{ec2_key_directory}}/key.pem"
+  vars:
+    new_host: "{{ redelk_server.tagged_instances[0].public_dns }}"
+
+- name: Wait for SSH to Come Up
+  wait_for_connection:
+    delay: 30
+    timeout: 120
+  when: redelk_server.changed == true

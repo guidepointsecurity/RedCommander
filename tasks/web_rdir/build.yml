@@ -1,0 +1,180 @@
+---
+- name: Create Security Group for Web Redirect Servers
+  ec2_group:
+   name: "WebRedir-SG-{{ engagement_id }}"
+   description: "Web SG for {{ vpc_name }}"
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: tcp
+       ports:
+       - 80
+       - 443
+       - 8080
+       cidr_ip: 0.0.0.0/0
+       rule_desc: "Web Ports"
+  register: webredir_sg
+
+- name: Get Current Redirect Server Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "WebRedirect-Server-{{ engagement_id }}"
+      "instance-state-name": "running"
+  register: redir_servers
+
+- set_fact:
+    tmp_active_webredirs: "{{ item.tags.Host }}"
+  with_items:
+    "{{ redir_servers.instances }}"
+  when: 
+    redir_servers.instances | length > 0
+  register: redir_servers_results
+
+- set_fact:
+    active_webredirs: "{{ redir_servers_results.results | map(attribute='ansible_facts.tmp_active_webredirs') | list }}"
+
+- name: Create Web Redirect Server(s)
+  ec2:
+   image: "{{ web_ami }}"
+   count: 1
+   wait: yes
+   instance_type: t2.micro
+   region: "{{ region }}"
+   group_id: ["{{ security_group.group_id }}", "{{ webredir_sg.group_id }}"]
+   vpc_subnet_id: "{{ subnet.subnet.id }}"
+   key_name: "{{ keypair.key.name  }}"
+   instance_tags:
+     Name: "WebRedirect-Server-{{ engagement_id }}"
+     Host: "{{ item }}"
+     Owner: "{{ infra_owner }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+  when:
+    active_webredirs is not defined or item not in active_webredirs
+  with_items:
+    "{{ domains }}"
+  register: webredir_servers
+
+- name: Get Current Redirect Server Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "WebRedirect-Server-{{ engagement_id }}"
+      "instance-state-name": "running"
+  register: redir_servers
+  tags:
+    - new_profile
+
+- set_fact:
+    tmp_active_webredirs: "{{ item.public_ip_address }}"
+  with_items:
+    "{{ redir_servers.instances }}"
+  when: 
+    redir_servers.instances | length > 0
+  register: redir_servers_results
+  tags:
+    - new_profile
+
+- set_fact:
+    webredir_ips: "{{ redir_servers_results.results | map(attribute='ansible_facts.tmp_active_webredirs') | list }}"
+  when:
+    redir_servers.instances | length > 0
+  tags:
+    - new_profile
+
+- set_fact:
+    tmp_active_webredirs: "{{ item.public_ip_address }}/32"
+  with_items:
+    "{{ redir_servers.instances }}"
+  when: 
+    redir_servers.instances | length > 0
+  register: redir_servers_results
+  tags:
+    - new_profile
+
+- set_fact:
+    webredir_cidr: "{{ redir_servers_results.results | map(attribute='ansible_facts.tmp_active_webredirs') | list }}"
+  when:
+    redir_servers.instances | length > 0
+
+- set_fact:
+    tmp_domain_assoc_host: "{{ item.tags.Host }}"
+  with_items:
+    "{{ redir_servers.instances }}"
+  when: 
+    redir_servers.instances | length > 0
+  register: tmp_domain_assoc_host_results
+
+- set_fact:
+    tmp_domain_assoc_ip: "{{ item.public_ip_address }}"
+  with_items:
+    "{{ redir_servers.instances }}"
+  when: 
+    redir_servers.instances | length > 0
+  register: tmp_domain_assoc_ip_results
+
+- set_fact:
+    t_tmp_domain_assoc_host: "{{ tmp_domain_assoc_host_results.results | map(attribute='ansible_facts.tmp_domain_assoc_host') | list }}"
+    t_tmp_domain_assoc_ip: "{{ tmp_domain_assoc_ip_results.results | map(attribute='ansible_facts.tmp_domain_assoc_ip') | list }}"
+  when:
+    redir_servers.instances | length > 0
+
+- set_fact:
+    domain_assoc: "{{ t_tmp_domain_assoc_host | zip(t_tmp_domain_assoc_ip) | list }}"
+
+- name: Adding WebRedirect Servers to Inventory
+  add_host:
+    name: "{{ item[1] }}"
+    group: web_redirectors
+    ansible_ssh_private_key_file: "{{ec2_key_directory}}/key.pem"
+  vars:
+    hostname: "{{ item[0] }}"
+  loop: "{{ domain_assoc }}"
+  register: web_redirectors_inv
+  tags:
+    - new_profile
+
+
+- name: Get RedELK Server Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Type": "RedELK"
+      "tag:Name": "RedELK-Server-{{ engagement_id }}"
+      "instance-state-name": "running"
+  register: redelk_server
+
+- name: Create Security Group
+  ec2_group:
+   name: "Main SG"
+   description: "Main SG for {{ vpc_name }}"
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: tcp
+       ports:
+       - 22
+       cidr_ip: "{{ gps_ips }}"
+     - proto: tcp
+       ports:
+       - 22
+       rule_desc: "SCP Only RedELK"
+       cidr_ip: "{{ redelk_server.instances[0].public_ip_address }}/32"
+  register: security_group
+
+- name: Wait for SSH to Come Up
+  wait_for_connection:
+    delay: 30
+    timeout: 120
+  when: webredir_servers.changed == true

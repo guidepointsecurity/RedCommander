@@ -1,0 +1,291 @@
+---
+- name: Updating Hostname
+  shell:
+    cmd: "hostnamectl set-hostname redelk-{{ engagement_id }}"
+
+- name: Upgrading Image
+  apt:
+    upgrade: full
+- name: Installing Software Properties Common
+  apt:
+    update_cache: yes
+    pkg:
+      - software-properties-common
+    install_recommends: yes
+    state: latest
+
+- name: Adding Certbot Repository
+  apt_repository:
+    repo: ppa:certbot/certbot
+
+- name: Installing Dependencies
+  apt:
+    update_cache: yes
+    pkg:
+      - openjdk-8-jdk
+      - openjdk-8-dbg
+      - curl
+      - wget
+      - python3-pip
+      - unzip
+      - default-jre
+      - expect
+      - certbot
+      - python3-boto3
+      - python3-botocore
+    state: latest
+    install_recommends: yes
+
+- name: Gathering Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "ip-address": "{{ ansible_host }}"
+  register: current_instance
+
+- name: Generate Certbot Certificate
+  shell:
+    # Non-Dry Run version
+    cmd: "certbot --agree-tos --no-eff-email -m none@none.com --standalone certonly -d {{ current_instance.instances[0].tags.Host }} --noninteractive"
+    #cmd: "certbot --dry-run --agree-tos --no-eff-email -m none@none.com --standalone certonly -d {{ current_instance.instances[0].tags.Host }} --noninteractive"
+    creates: "/etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/fullchain.pem"
+
+- name: Gathering C2 Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "CobaltStrike-Server-{{ engagement_id }}"
+      "instance-state-name": "running"
+  register: c2_servers
+
+- name: Gathering WebRedirect Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "WebRedirect-Server-{{ engagement_id }}"
+      "instance-state-name": "running"
+  register: webredir_servers
+
+- name: Gathering DNS C2 Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "CobaltStrike-Server-{{ engagement_id }}"
+      "tag:Type": "DNS"
+      "instance-state-name": "running"
+  register: c2_dns
+
+- name: Gathering HTTPS C2 Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "CobaltStrike-Server-{{ engagement_id }}"
+      "tag:Type": "HTTPS"
+      "instance-state-name": "running"
+  register: c2_https
+
+- set_fact:
+    tmp_c2: "{{ item.public_ip_address }}/32"
+  with_items:
+    "{{ c2_servers.instances }}"
+  when:
+    webredir_servers.instances | length > 0
+  register: c2_servers_results
+
+- set_fact:
+    c2_ips: "{{ c2_servers_results.results | map(attribute='ansible_facts.tmp_c2') | list }}"
+  when:
+    c2_servers.instances | length > 0
+
+- set_fact:
+    tmp_web: "{{ item.public_ip_address }}/32"
+  with_items:
+    "{{ webredir_servers.instances }}"
+  when:
+    webredir_servers.instances | length > 0
+  register: webredir_servers_results
+
+- set_fact:
+    webredir_cidr: "{{ webredir_servers_results.results | map(attribute='ansible_facts.tmp_web') | list }}"
+  when:
+    webredir_servers.instances | length > 0
+
+- name: Modify Security Group for RedELK Server
+  ec2_group:
+   name: "RedELK-SG-{{ engagement_id }}"
+   description: "RedELK SG for {{ vpc_name }}"
+   vpc_id: "{{ current_instance.instances[0].vpc_id }}"
+   #vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: tcp
+       ports:
+       - 443
+       rule_desc: "Kibana Port"
+       cidr_ip: "{{ gps_ips }}"
+     - proto: tcp
+       ports:
+       - 5044
+       - 22
+       cidr_ip: "{{ webredir_cidr }}"
+       rule_desc: "Web Redirect FileBeat"
+     - proto: tcp
+       ports:
+       - 5044
+       - 22
+       cidr_ip: "{{ c2_ips }}"
+       rule_desc: "C2 FileBeat"
+  register: redelk_sg
+
+# Small Modifications. Folder Locations, TimeZone, GPS IP Addresses
+- name: Unpacking RedELK
+  unarchive:
+    src: files/RedELK.zip
+    dest: /home/ubuntu/
+    mode: u=rwx,g=rx,o=rwx
+    owner: ubuntu
+    group: ubuntu
+    creates: /home/ubuntu/RedELK/initial-setup.sh
+  register: redelk_config
+
+# Modified from https://github.com/curi0usJack/ansible-redelk/blob/master/includes/redelk_prep.yml
+- name: Updating certs/config.cnf
+  lineinfile:
+    dest: /home/ubuntu/RedELK/certs/config.cnf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  with_items:
+    - {regexp: '^C = ', line: 'C = {{ cert_C }}'}
+    - {regexp: '^ST = ', line: 'ST = {{ cert_ST }}'}
+    - {regexp: '^L = ', line: 'L = {{ cert_L }}'}
+    - {regexp: '^O = ', line: 'O = {{ cert_O }}'}
+    - {regexp: '^OU = ', line: 'OU = {{ cert_OU }}'}
+    - {regexp: '^CN = ', line: 'CN = {{ cert_CN }}'}
+    - {regexp: '^emailAddress = ', line: 'emailAddress = {{ cert_email }}'}
+    - {regexp: '^DNS.1 = ', line: 'DNS.1 = {{ current_instance.instances[0].tags.Host }}'}
+    - {regexp: '^DNS.2 = ', line: ""}
+    - {regexp: '^IP.1 = ', line: "IP.1 = {{ current_instance.instances[0].public_ip_address }}"}
+
+- name: Updating alarm.json.conf
+  lineinfile:
+    dest: /home/ubuntu/RedELK/elkserver/etc/redelk/alarm.json.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  with_items:
+    - {regexp: '^ "Verbosity', line: ' "Verbosity":"{{ alarm_verbosity }}",'}
+    - {regexp: '^ "interval', line: ' "interval":"{{ alarm_interval }}",'}
+    - {regexp: '^ "vt_apikey', line: ' "vt_apikey":"{{ alarm_vtapikey }}",'}
+    - {regexp: '^ "ibm_BasicAuth', line: ' "ibm_BasicAuth":"Basic {{ alarm_ibmapikey }}",'}
+    - {regexp: '^ "HybridAnalysis', line: ' "HybridAnalysisAPIKEY":"{{ alarm_haapikey }}",'}
+    - {regexp: '^ "smtpSrv', line: ' "smtpSrv":"{{ alarm_smtpsrv }}",'}
+    - {regexp: '^ "smtpPort', line: ' "smtpPort":"{{ alarm_smtpport }}",'}
+    - {regexp: '^ "smtpName', line: ' "smtpName":"{{ alarm_smtpname }}",'}
+    - {regexp: '^ "smtpPass', line: ' "smtpPass":"{{ alarm_smtppass }}",'}
+    - {regexp: '^ "fromAddr', line: ' "fromAddr":"{{ alarm_fromaddr }}",'}
+    - {regexp: '^ "toAddrs', line: ' "toAddrs":[{{ alarm_toaddr }}],'}
+    - {regexp: '^ "tempDir', line: ' "tempDir":"{{ alarm_tempdir }}"'}
+  no_log: true
+
+- set_fact:
+    domain_list: "{{ domains | join('\n')}}"
+    dns_domain_list: "{{ dns_domains | join('\n')}}"
+    backend_domain_list: "{{ backend_domain | join('\n')}}"
+
+- name: Updating Red Team Domains
+  blockinfile:
+    dest: /home/ubuntu/RedELK/elkserver/etc/redelk/redteamdomains.conf
+    block: |
+      {{ domain_list }}
+      {{ dns_domain_list }}
+      {{ backend_domain_list }}
+
+#*/2 * * * * redelk /usr/share/redelk/bin/getremotelogs.sh $IP $HOSTNAME scponly
+- name: Updating Cron Job
+  blockinfile:
+    dest: /home/ubuntu/RedELK/elkserver/cron.d/redelk
+    insertafter: '^PATH'
+    block: |
+      */2 * * * * redelk /usr/share/redelk/bin/getremotelogs.sh {{ dns_backend_sub[0] }}.{{ backend_domain[0] }} c2-dns scponly
+      */2 * * * * redelk /usr/share/redelk/bin/getremotelogs.sh {{ https_backend_sub[0] }}.{{ backend_domain[0] }} c2-https scponly
+
+# So it begins
+- name: Executing Initial RedELK Script
+  shell:
+    chdir: /home/ubuntu/RedELK/
+    cmd: "./initial-setup.sh certs/config.cnf"
+    #Intentionally misspelled
+    creates: /home/ubuntu/RedELK/redelk-inintialsetup.log
+
+- name: Extracting ElkServer Archive
+  unarchive:
+    remote_src: yes
+    src: /home/ubuntu/RedELK/elkserver.tgz
+    dest: /opt/
+    mode: u=rwx,g=rx,o=rwx
+    owner: ubuntu
+    group: ubuntu
+    creates: /opt/elkserver/install-elkserver.sh
+  register: elksetup
+
+- name: Installing RedElk
+  command:
+    cmd: ./install-elkserver.sh
+    chdir: /opt/elkserver
+    creates: /opt/elkserver/redelk-install.log
+  register: elk_install_output
+  #ignore_errors: true
+
+- name: Changing htpasswd
+  shell:
+    cmd: "echo redelk:$(echo '{{ htpasswd }}' | openssl passwd -stdin -apr1) > /etc/nginx/htpasswd.users"
+
+- name: Modifying NGINX to be SSL
+  lineinfile:
+    dest: /etc/nginx/sites-available/default
+    regexp: "{{item.regexp}}"
+    line: "{{item.line}}"
+  with_items:
+    - {regexp: '^    listen 80', line: '    listen 443 ssl;'}
+    - {regexp: '^    server_name', line: "    server_name    {{ redelk_backend_sub }}.{{ backend_domain[0] }};"}
+        
+
+- name: Continuing NGINX Modifications to be SSL
+  blockinfile:
+    dest: /etc/nginx/sites-available/default
+    insertafter: '^    server_name'
+    block: |
+      ssl_certificate     /etc/letsencrypt/live/{{ redelk_backend_sub }}.{{ backend_domain[0] }}/cert.pem;
+      ssl_certificate_key /etc/letsencrypt/live/{{ redelk_backend_sub }}.{{ backend_domain[0] }}/privkey.pem;
+      ssl_protocols       TLSv1 TLSv1.1 TLSv1.2;
+      ssl_ciphers         HIGH:!aNULL:!MD5;
+
+- name: Restart NGINX Service
+  service:
+    name: nginx
+    state: restarted
+
+- name: Starting Kibana Service
+  service:
+    name: kibana
+    state: restarted
+
+- name: Fetching RedELK Installer Packages
+  fetch:
+    src: "/home/ubuntu/RedELK/{{ item.name }}"
+    dest: "tmp/{{ item.name }}"
+    flat: yes
+  with_items:
+    - { name: 'teamservers.tgz' }
+    - { name: 'redirs.tgz' }

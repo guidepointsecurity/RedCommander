@@ -1,0 +1,15 @@
+[Unit]
+Description=SoCat Service
+After=network.target
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+Type=simple
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+User=root
+ExecStart=/usr/bin/socat udp4-recvfrom:53,reuseaddr,fork udp4-sendto:{{ c2_dns_ip }}:53
+
+[Install]
+WantedBy=multi-user.target

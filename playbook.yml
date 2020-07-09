@@ -1,0 +1,154 @@
+---
+# Build out C2 Servers
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # Primary VPC file
+    - include_tasks: tasks/vpc.yml
+    # YML to build out C2 EC2 instances
+    - include_tasks: tasks/c2/build.yml
+    # YML to Configure CloudFlare
+    - include_tasks: tasks/c2/cloudflare.yml
+  tags:
+    - new_profile
+
+# Build out RedELK Server
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to build out RedELK EC2 instance
+    # This Builds a NON FREE t2.large instance!
+    - include_tasks: tasks/redelk/build.yml
+    # YML to Configure CloudFlare
+    - include_tasks: tasks/redelk/cloudflare.yml
+
+# Build out WebRedirect Servers
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to build out C2 EC2 instances
+    - include_tasks: tasks/web_rdir/build.yml
+    # YML to Configure CloudFlare
+    - include_tasks: tasks/web_rdir/cloudflare.yml
+  tags:
+    - new_profile
+
+# Configure CloudFront Distribution if Tag enabled.
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to configure CloudFront
+    - include_tasks: tasks/c2/cloudfront.yml
+  tags:
+    - cloudfront
+    - new_profile
+
+# Configure C2 Servers
+- hosts: teamservers
+  become: yes
+  become_method: sudo
+  remote_user: ubuntu
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to configure C2 EC2 instances
+    - include_tasks: tasks/c2/configure.yml
+    # Including Authorized Keys File
+    - include_tasks: tasks/ssh.yml
+  tags:
+    - new_profile
+
+# Build out DNS Redirect Servers
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to build out C2 EC2 instances
+    - include_tasks: tasks/dns_rdir/build.yml
+    # YML to Configure CloudFlare
+    - include_tasks: tasks/dns_rdir/cloudflare.yml
+  tags:
+    - new_profile
+
+# Configure WebRedirect Servers
+- hosts: web_redirectors
+  become: yes
+  become_method: sudo
+  remote_user: ubuntu
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to Configure Web Redirectors
+    - include_tasks: tasks/web_rdir/configure.yml
+    # Including Authorized Keys File
+    - include_tasks: tasks/ssh.yml
+    # YML for Custom Joomla. This is optional and can be commented out
+    - include_tasks: tasks/web_rdir/joomla.yml
+  tags:
+    - new_profile
+
+- hosts: dns_redirectors
+  become: yes
+  become_method: sudo
+  remote_user: ubuntu
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to Configure DNS EC2 instances
+    - include_tasks: tasks/dns_rdir/configure.yml
+    # Including Authorized Keys File
+    - include_tasks: tasks/ssh.yml
+  tags:
+    - new_profile
+
+# Initial Config of RedELK Server
+- hosts: redelk
+  become: yes
+  become_method: sudo
+  remote_user: ubuntu
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to Configure RedELK instance
+    - include_tasks: tasks/redelk/configure.yml
+    # Including Authorized Keys File
+    - include_tasks: tasks/ssh.yml
+
+# Configuring Teamservers for RedELK
+- hosts: teamservers
+  become: yes
+  become_method: sudo
+  remote_user: ubuntu
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to Configure Teamservers for RedELK
+    - include_tasks: tasks/redelk/teamservers.yml
+
+# Configuring Redirectors for RedELK
+- hosts: web_redirectors
+  become: yes
+  become_method: sudo
+  remote_user: ubuntu
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to Configure Redirectors for RedELK
+    - include_tasks: tasks/redelk/redirs.yml
+
+# Janky Output Tasks
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    - include_tasks: tasks/output.yml

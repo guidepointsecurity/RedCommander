@@ -1,0 +1,153 @@
+---
+- name: Create Security Group for DNS Redirect Servers
+  ec2_group:
+   name: "DNSRedir-SG-{{ engagement_id }}"
+   description: "DNS SG for {{ vpc_name }}"
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: udp
+       ports:
+       - 53
+       cidr_ip: 0.0.0.0/0
+       rule_desc: "DNS C2 Ports"
+  register: dnsredir_sg
+
+- name: Get Current Redirect Server Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "DNSRedirect-Server-{{ engagement_id }}"
+      "instance-state-name": "running"
+  register: redir_servers
+
+- set_fact:
+    tmp_active_DNSredirs: "{{ item.tags.Host }}"
+  with_items:
+    "{{ redir_servers.instances }}"
+  when: 
+    redir_servers.instances | length > 0
+  register: redir_servers_results
+
+- set_fact:
+    active_DNSredirs: "{{ redir_servers_results.results | map(attribute='ansible_facts.tmp_active_DNSredirs') | list }}"
+
+- name: Create DNS Redirect Server(s)
+  ec2:
+   image: "{{ dns_ami }}"
+   count: 1
+   wait: yes
+   instance_type: t2.micro
+   region: "{{ region }}"
+   group_id: ["{{ security_group.group_id }}", "{{ dnsredir_sg.group_id }}"]
+   vpc_subnet_id: "{{ subnet.subnet.id }}"
+   key_name: "{{ keypair.key.name  }}"
+   instance_tags:
+     Name: "DNSRedirect-Server-{{ engagement_id }}"
+     Host: "{{ item }}"
+     Owner: "{{ infra_owner }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+  when:
+    active_DNSredirs is not defined or item not in active_DNSredirs
+  with_items:
+    "{{ dns_domains }}"
+  register: DNSredir_servers
+
+- name: Get Current Redirect Server Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "DNSRedirect-Server-{{ engagement_id }}"
+      "instance-state-name": "running"
+  register: redir_servers
+  tags:
+    - new_profile
+
+- set_fact:
+    tmp_active_DNSredirs: "{{ item.public_ip_address }}"
+  with_items:
+    "{{ redir_servers.instances }}"
+  when: 
+    redir_servers.instances | length > 0
+  register: redir_servers_results
+  tags:
+    - new_profile
+
+- set_fact:
+    DNSredir_ips: "{{ redir_servers_results.results | map(attribute='ansible_facts.tmp_active_DNSredirs') | list }}"
+  when:
+    redir_servers.instances | length > 0
+  tags:
+    - new_profile
+
+- set_fact:
+    tmp_active_DNSredirs: "{{ item.public_ip_address }}/32"
+  with_items:
+    "{{ redir_servers.instances }}"
+  when: 
+    redir_servers.instances | length > 0
+  register: redir_servers_results
+  tags:
+    - new_profile
+
+- set_fact:
+    DNSredir_cidr: "{{ redir_servers_results.results | map(attribute='ansible_facts.tmp_active_DNSredirs') | list }}"
+  when:
+    redir_servers.instances | length > 0
+
+# This will cause an issue if you don't have an even number of redirect servers to redirect domains
+- set_fact:
+    domain_assoc: "{{ dns_domains | zip(DNSredir_ips) | list }}"
+  tags:
+    - new_profile
+
+- name: Adding DNSRedirect Servers to Inventory
+  add_host:
+    name: "{{ item[1] }}"
+    group: dns_redirectors
+    ansible_ssh_private_key_file: "{{ec2_key_directory}}/key.pem"
+  vars:
+    hostname: "{{ item[0] }}"
+  loop: "{{ domain_assoc }}"
+  tags:
+    - new_profile
+
+- name: Modifying Security Group Rules for C2
+  ec2_group:
+   name: "C2-SG-{{ engagement_id }}"
+   description: "C2 SG for {{ vpc_name }}"
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: tcp
+       ports:
+       - 80
+       - 443
+       - 8080
+       cidr_ip: "{{ webredir_cidr }}"
+       rule_desc: "C2 Payload Ports"
+     - proto: udp
+       ports:
+       - 53
+       cidr_ip: "{{ DNSredir_cidr }}"
+       rule_desc: "C2 Payload Ports"
+     - proto: tcp
+       ports:
+       - 50050
+       rule_desc: "C2 Teamserver Port"
+       cidr_ip: "{{ gps_ips }}"
+
+- name: Wait for SSH to Come Up
+  wait_for_connection:
+    delay: 30
+    timeout: 120
+  when: DNSredir_servers.changed == true

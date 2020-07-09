@@ -1,0 +1,25 @@
+---
+# Adding C2 DNS Records.
+- name: Adding CloudFlare Records for DNS Redirector
+  cloudflare_dns:
+    account_email: "{{ cf_email }}"
+    account_api_token: "{{ cf_key }}"
+    record: "{{ dns_query_domain }}"
+    # This is part of an update change. If we use more than one backend_domain, this will have to change
+    zone: "{{ dns_domains[0] }}"
+    type: NS
+    ttl: 300
+    value: "ns1.{{ dns_domains[0] }}"
+    solo: yes
+
+# Adding DNS Redirect DNS Records
+- name: Adding CloudFlare Records for DNS Domains
+  cloudflare_dns:
+    account_email: "{{ cf_email }}"
+    account_api_token: "{{ cf_key }}"
+    zone: "{{ dns_domains[0] }}"
+    record: "ns1"
+    type: A
+    ttl: 300
+    value: "{{ redir_servers.instances[0].public_ip_address }}"
+    solo: yes
