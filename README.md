@@ -4,7 +4,7 @@ Red Commander
 
 Creates two Cobalt Strike C2 servers (DNS and HTTPS), with redirectors, and RedELK in Amazon AWS. Minimal setup required!
 
-#Important!
+# Important!
 This build does **NOT** use free-tier eligible servers. Approximate costs can vary. During testing, we used six ec2 instances that cost around $70/month total.
 
 ## <span style="color:red;background-color:black;"> Please read all of this Readme. </span>
