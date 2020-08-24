@@ -1,4 +1,3 @@
-![Logo](images/large_redcommander_logo.png)
 Red Commander
 =========
 
