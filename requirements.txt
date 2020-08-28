@@ -1,3 +1,4 @@
 requests
 botocore
 boto3
+boto
