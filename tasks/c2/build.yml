@@ -1,38 +1,38 @@
 ---
 # At the time of this build, CloudFront has more than 50 CIDRs
-- set_fact:
-    cf_ips: "{{ lookup('aws_service_ip_ranges', service='CLOUDFRONT', wantlist=True) }}"
-    cf_part1: []
-    cf_part2: []
+#- set_fact:
+#    cf_ips: "{{ lookup('aws_service_ip_ranges', service='CLOUDFRONT', wantlist=True) }}"
+#    cf_part1: []
+#    cf_part2: []
 
-- set_fact:
-    cf_part1: "{{ cf_part1 + [ cf_ips[item | int] ] }}"
-  with_sequence: start=0 end=48 stride=1
-  no_log: true
+#- set_fact:
+#    cf_part1: "{{ cf_part1 + [ cf_ips[item | int] ] }}"
+#  with_sequence: start=0 end=48 stride=1
+#  no_log: true
 
-- set_fact:
-    cf_part2: "{{ cf_part2 + [ cf_ips[item | int] ] }}"
-  with_sequence: start=49 end="{{ lookup('aws_service_ip_ranges', service='CLOUDFRONT', wantlist=True) | length | int - 1 }}" stride=1
-  no_log: true
+#- set_fact:
+#    cf_part2: "{{ cf_part2 + [ cf_ips[item | int] ] }}"
+#  with_sequence: start=49 end="{{ lookup('aws_service_ip_ranges', service='CLOUDFRONT', wantlist=True) | length | int - 1 }}" stride=1
+#  no_log: true
 
-- name: Create Security Groups for CloudFront
-  ec2_group:
-   name: "CF-SG-{{ engagement_id }}-{{ item.number }}"
-   description: "CF SG for {{ vpc_name }}"
-   vpc_id: "{{ vpc.vpc.id }}"
-   region: "{{ region }}"
-   aws_access_key: "{{ aws_access_key }}"
-   aws_secret_key: "{{ aws_secret_key }}"
-   rules:
-     - proto: tcp
-       ports:
-       - 443
-       rule_desc: "CloudFront IP Addresses"
-       cidr_ip: "{{ item.cidr }}"
-  with_items:
-    - {"number" : 1, "cidr" : "{{ cf_part1 }}" }
-    - {"number" : 2, "cidr" : "{{ cf_part2 }}" }
-  register: cf_sg
+#- name: Create Security Groups for CloudFront
+#  ec2_group:
+#   name: "CF-SG-{{ engagement_id }}-{{ item.number }}"
+#   description: "CF SG for {{ vpc_name }}"
+#   vpc_id: "{{ vpc.vpc.id }}"
+#   region: "{{ region }}"
+#   aws_access_key: "{{ aws_access_key }}"
+#   aws_secret_key: "{{ aws_secret_key }}"
+#   rules:
+#     - proto: tcp
+#       ports:
+#       - 443
+#       rule_desc: "CloudFront IP Addresses"
+#       cidr_ip: "{{ item.cidr }}"
+#  with_items:
+#    - {"number" : 1, "cidr" : "{{ cf_part1 }}" }
+#    - {"number" : 2, "cidr" : "{{ cf_part2 }}" }
+#  register: cf_sg
 
 - name: Create Security Group for C2 Servers
   ec2_group:
