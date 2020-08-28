@@ -72,7 +72,7 @@
    wait: yes
    instance_type: t2.small
    region: "{{ region }}"
-   group_id: ["{{ security_group.group_id }}", "{{ c2_sg.group_id }}", "{{ cf_sg.results[0].group_id }}", "{{ cf_sg.results[1].group_id }}"]
+   group_id: ["{{ security_group.group_id }}", "{{ c2_sg.group_id }}"]
    vpc_subnet_id: "{{ subnet.subnet.id }}"
    key_name: "{{ keypair.key.name  }}"
    instance_tags:
