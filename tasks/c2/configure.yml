@@ -66,18 +66,19 @@
   when: cs_custom.stat.exists == true
 
 # This module is only needed if you want to download a base version of Cobalt Strike
-- name: Downloading CobaltStrike
-  shell: |
-    sed -i '1s/^/nameserver 1.1.1.1\\n/' /etc/resolv.conf
-    token=`curl -i -s -k -X 'POST' -H 'Host: cobaltstrike.com' -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:69.0) Gecko/20100101 Firefox/69.0' -H 'Content-Type: application/x-www-form-urlencoded' -H 'Connection: close' -H 'Referer: https://cobaltstrike.com/download' --data-binary "dlkey={{ cskey }}" 'https://cobaltstrike.com/download' | grep 'href="/downloads' | cut -f 4 -d '\"' | cut -f 1 -d '.'`
-    wget https://cobaltstrike.com$\{token\}.tgz -O /tmp/cobaltstrike.tgz
-  args:
-    creates: "/tmp/cobaltstrike.tgz"
-  when: cs_custom.stat.exists == false
+- name: Get download token from Cobalt Strike website
+  shell: curl -s https://www.cobaltstrike.com/download -d "dlkey={{ cskey }}" | grep 'href="/downloads/' | cut -d '/' -f3
+  register: download_token
+
+- name: Download Cobalt Strike tarball
+  get_url:
+    url: "https://www.cobaltstrike.com/downloads/{{ download_token.stdout }}/cobaltstrike-dist.tgz"
+    dest: "/tmp/"
+    mode: get
 
 - name: Unpacking CobaltStrike
   unarchive:
-    src: /tmp/cobaltstrike.tgz
+    src: /tmp/cobaltstrike-dist.tgz
     dest: /opt/
     remote_src: yes
     creates: /opt/cobaltstrike/cobaltstrike.jar
