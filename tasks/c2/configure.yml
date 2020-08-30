@@ -61,8 +61,8 @@
 - name: Unpacking CobaltStrike
   unarchive:
     src: files/cobaltstrike.zip
-    dest: /opt/
-    creates: /opt/cobaltstrike/cobaltstrike.jar
+    dest: /root/
+    creates: /root/cobaltstrike/cobaltstrike.jar
   when: cs_custom.stat.exists == true
 
 # This module is only needed if you want to download a base version of Cobalt Strike
@@ -79,9 +79,9 @@
 - name: Unpacking CobaltStrike
   unarchive:
     src: /tmp/cobaltstrike-dist.tgz
-    dest: /opt/
+    dest: /root/
     remote_src: yes
-    creates: /opt/cobaltstrike/cobaltstrike.jar
+    creates: /root/cobaltstrike/cobaltstrike.jar
   when: cs_custom.stat.exists == false
 
 - name: Adding CobaltStrike License Key
@@ -93,7 +93,7 @@
 
 - name: Updating CobaltStrike
   shell:
-    chdir: "/opt/cobaltstrike"
+    chdir: "/root/cobaltstrike"
     cmd: "./update"
     warn: no
 
@@ -116,7 +116,7 @@
 - name: Grabbing Custom KeyStore if Exists
   copy:
     src: "files/custom/{{ current_instance.instances[0].tags.Type }}/keystore.store"
-    dest: /opt/cobaltstrike/keystore.store
+    dest: /root/cobaltstrike/keystore.store
   when: c2_keystore.stat.exists == true
 
 - name: Generate Certbot Certificate
@@ -130,9 +130,9 @@
 - name: Creating KeyStore for C2
   shell: |
     openssl pkcs12 -export -in /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/fullchain.pem -inkey /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/privkey.pem -out /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/{{ current_instance.instances[0].tags.Host }}.p12 -name {{ current_instance.instances[0].tags.Host }} -passout pass:{{ keystore_password }};
-    keytool -importkeystore -deststorepass {{ keystore_password }} -destkeypass {{ keystore_password }} -destkeystore /opt/cobaltstrike/keystore.store -srckeystore /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/{{ current_instance.instances[0].tags.Host }}.p12 -srcstoretype PKCS12 -srcstorepass {{ keystore_password }} -alias {{ current_instance.instances[0].tags.Host }}
+    keytool -importkeystore -deststorepass {{ keystore_password }} -destkeypass {{ keystore_password }} -destkeystore /root/cobaltstrike/keystore.store -srckeystore /etc/letsencrypt/live/{{ current_instance.instances[0].tags.Host }}/{{ current_instance.instances[0].tags.Host }}.p12 -srcstoretype PKCS12 -srcstorepass {{ keystore_password }} -alias {{ current_instance.instances[0].tags.Host }}
   args:
-    creates: /opt/cobaltstrike/keystore.store
+    creates: /root/cobaltstrike/keystore.store
   when: c2_keystore.stat.exists == false
 
 - name: Get Remote File Location for Profile
@@ -144,19 +144,19 @@
 - name: Grabbing Custom C2 Profile if Exists
   copy:
     src: "files/custom/{{ current_instance.instances[0].tags.Type }}/evasive.profile"
-    dest: /opt/cobaltstrike/evasive.profile
+    dest: /root/cobaltstrike/evasive.profile
   when: c2_profile.stat.exists == true
 
 - name: Unpacking C2concealer
   unarchive:
     src: files/C2concealer.zip
-    dest: /opt/
-    creates: /opt/C2concealer/script.exp
+    dest: /root/
+    creates: /root/C2concealer/script.exp
   when: c2_profile.stat.exists == false
 
 - name: Installing C2concealer
   shell:
-    chdir: /opt/C2concealer
+    chdir: /root/C2concealer
     cmd: "chmod +x ./install.sh; ./install.sh"
     creates: /usr/local/bin/C2concealer
     warn: no
@@ -164,7 +164,7 @@
 
 - name: Executing C2concealer via Expect
   shell:
-    chdir: /opt/C2concealer/
+    chdir: /root/C2concealer/
     cmd: "chmod +x ./script.exp; ./script.exp; touch /tmp/c2concealer"
     creates: /tmp/c2concealer
   when: c2_profile.stat.exists == false
@@ -173,7 +173,7 @@
 
 - name: Deleting Copied KeyStore File
   file:
-    path: /opt/C2concealer/keystore.store
+    path: /root/C2concealer/keystore.store
     state: absent
   when: c2_profile.stat.exists == false
   tags:
@@ -181,15 +181,15 @@
 
 - name: Moving Profile to CobaltStrike
   shell:
-    chdir: /opt/C2concealer
-    cmd: "x=`ls -x *.profile`; mv $x /opt/cobaltstrike/evasive.profile; rm -f $x"
+    chdir: /root/C2concealer
+    cmd: "x=`ls -x *.profile`; mv $x /root/cobaltstrike/evasive.profile; rm -f $x"
   when: c2_profile.stat.exists == false
   tags:
     - new_profile
 
 - name: Modifying DNS Stager for Evasive Profile
   lineinfile:
-    path: /opt/cobaltstrike/evasive.profile
+    path: /root/cobaltstrike/evasive.profile
     regexp: '^.*dns_stager_subhost'
     state: absent
   when: c2_profile.stat.exists == false
@@ -197,7 +197,7 @@
 # Likely won't work if more than 2 HTTPS C2 servers are created
 - name: Fetching Evasive Profile
   fetch:
-    src: /opt/cobaltstrike/evasive.profile
+    src: /root/cobaltstrike/evasive.profile
     dest: "tmp/{{ current_instance.instances[0].tags.Type }}/evasive.profile"
     flat: yes
   tags:
