@@ -70,6 +70,7 @@ All files have to be named EXACTLY as shown above in the folders shown. The exce
  Example: `mysqldump -u root -p -d cs_joomla >> dump.sql`
  Then, execute `cd /var/www/html; zip -r joomla.zip *` to get your Joomla install zipped properly. Don't worry, the play will add the correct configuration settings (by default, mysql password, user and session type modifiers)
 * You can add a custom Cobalt Strike MalleableC2 and/or Keystore per C2 to `files/custom/DNS` and `files/custom/HTTPS` respectively.
+* Add RedELK.zip to files/.
 
 Requirements
 ------------
