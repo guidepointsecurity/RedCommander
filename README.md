@@ -9,6 +9,14 @@ This build does **NOT** use free-tier eligible servers. Approximate costs can va
 ## <span style="color:red;background-color:black;"> Please read all of this Readme. </span>
 I spent a ton of time ensuring that as many questions as I could think of were answered. If I missed something, please feel free to reach out. But if it's here, I'm going to tell you to RTFM :)
 
+Setup
+-------------
+* Read the Blog!
+* Install Ansible
+* Install requirements.txt (Python3 Only!)
+* Download RedELK from [here](https://github.com/outflanknl/RedELK). Customize RedELK to your liking pre-deployment. We changed TimeZones here.
+* Zip customized RedELK.zip. This archive should contain a folder called "RedELK" in its root. put this ZIP file into files/.
+
 Features
 --------
 
