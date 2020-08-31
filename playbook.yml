@@ -145,6 +145,14 @@
     # YML to Configure Redirectors for RedELK
     - include_tasks: tasks/redelk/redirs.yml
 
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    # Primary Variables file
+    - include_vars: vars/main.yml
+    # YML to Allow SSH for All hosts on this stack
+    - include_tasks: tasks/redelk/final.yml
+
 # Janky Output Tasks
 - hosts: localhost
   gather_facts: no
