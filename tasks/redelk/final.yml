@@ -1,0 +1,34 @@
+---
+- name: Gathering All Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "*Server-{{ engagement_id }}*"
+      "instance-state-name": "running"
+  register: instances
+
+- set_fact:
+    tmp_all_ips: "{{ item.public_ip_address }}/32"
+  with_items:
+    "{{ instances.instances }}"
+  register: tmp_all_ips_results
+
+- set_fact:
+    all_ips: "{{ tmp_all_ips_results.results | map(attribute='ansible_facts.tmp_all_ips') | list }}"
+
+- name: Modify Main Security Group
+  ec2_group:
+   name: "Main SG - {{ engagement_id }}"
+   description: "Main SG for {{ vpc_name }}"
+   vpc_id: "{{ vpc.vpc.id }}"
+   region: "{{ region }}"
+   aws_access_key: "{{ aws_access_key }}"
+   aws_secret_key: "{{ aws_secret_key }}"
+   rules:
+     - proto: tcp
+       ports:
+       - 22
+       cidr_ip: "{{gps_ips + all_ips}}"
+  register: security_group
