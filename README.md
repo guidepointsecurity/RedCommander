@@ -7,7 +7,7 @@ Creates two Cobalt Strike C2 servers (DNS and HTTPS), with redirectors, and RedE
 This build does **NOT** use free-tier eligible servers. Approximate costs can vary. During testing, we used six ec2 instances that cost around $70/month total.
 
 ## <span style="color:red;background-color:black;"> Please read all of this Readme. </span>
-I spent a ton of time ensuring that as many questions as I could think of were answered. If I missed something, please feel free to reach out. But if it's here, I'm going to tell you to RTFM :)
+I spent a ton of time ensuring that as many questions as I could think of were answered. If I missed something, please feel free to reach out. This tool may be maintained periodically, but it's mainly used as a stepping stone for further development. 
 
 Setup
 -------------
