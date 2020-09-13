@@ -28,7 +28,7 @@
         "{{ info.instances }}"
     - name: Deleting CloudFlare Records
       shell:
-        cmd: "python files/nuke_cloudflare_dns.py '{{ cf_email }}' '{{ cf_key }}' '{{ domains }}'"
+        cmd: "python scripts/nuke_cloudflare_dns.py '{{ cf_email }}' '{{ cf_key }}' '{{ domains }}'"
       no_log: yes
     - name: Removing KeyPair
       ec2_key:
