@@ -127,7 +127,7 @@
 
 - name: Copying HTTPS Evasive Profile
   copy:
-    src: tmp/HTTPS/evasive.profile
+    src: files/custom/HTTPS/evasive.profile
     dest: /tmp/evasive.profile
     force: yes
   tags:
